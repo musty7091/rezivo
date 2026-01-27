@@ -1,18 +1,18 @@
 const express = require('express');
 const cors = require('cors');
-require('dotenv').config();
+require('dotenv').config(); //
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Parçaları Dahil Et
-const reservationRoutes = require('./routes/reservations');
-const adminRoutes = require('./routes/admin');
+const reservationRoutes = require('./routes/reservations'); //
+const adminRoutes = require('./routes/admin'); //
+const superadminRoutes = require('./routes/superadmin');
 
-// Parçaları Adreslere Bağla
 app.use('/api/reservations', reservationRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/superadmin', superadminRoutes);
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Sistem modüler olarak ${PORT} portunda yayında!`));
+const PORT = process.env.PORT || 5000; //
+app.listen(PORT, () => console.log(`🚀 Rezivo Modüler Sistem ${PORT} portunda tam kapasite çalışıyor!`));
