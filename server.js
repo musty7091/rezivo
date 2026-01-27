@@ -104,6 +104,30 @@ app.post('/api/reservations/create', async (req, res) => {
     }
 });
 
+// REZERVASYON SİLME: Bir rezervasyonu sistemden tamamen kaldırır
+app.delete('/api/reservations/delete/:id', async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const deletedRes = await pool.query(
+            'DELETE FROM reservations WHERE id = $1 RETURNING *',
+            [id]
+        );
+
+        if (deletedRes.rows.length === 0) {
+            return res.status(404).json({ error: "Silinecek rezervasyon bulunamadı." });
+        }
+
+        res.json({
+            message: "Rezervasyon silindi, kapasite tekrar açıldı!",
+            silinenKayit: deletedRes.rows[0]
+        });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ error: "Silme işlemi sırasında hata oluştu." });
+    }
+});
+
 app.post('/api/admin/create-event', async (req, res) => {
     // Gelen verileri alıyoruz
     const { tenantId, eventName, date, hasMeal, mealPrice, prepayment } = req.body;
