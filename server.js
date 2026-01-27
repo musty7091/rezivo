@@ -48,39 +48,43 @@ app.post('/api/reservations/create', async (req, res) => {
     const { tenantId, customerName, phone, areaId, guestCount, date, time } = req.body;
 
     try {
-        // 1. ADIM: O tarihte özel bir etkinlik var mı kontrol et?
+        // 1. KAPASİTE KONTROLÜ: Seçilen alanın kapasitesini öğren
+        const areaInfo = await pool.query('SELECT total_capacity, area_name FROM areas WHERE id = $1', [areaId]);
+        const capacity = areaInfo.rows[0].total_capacity;
+
+        // 2. DOLULUK HESABI: O gün o alanda toplam kaç kişi var?
+        const currentOccupancy = await pool.query(
+            'SELECT SUM(guest_count) as filled FROM reservations WHERE area_id = $1 AND reservation_date = $2',
+            [areaId, date]
+        );
+        const filled = parseInt(currentOccupancy.rows[0].filled || 0);
+
+        // 3. KARAR: Yer var mı?
+        if (filled + parseInt(guestCount) > capacity) {
+            return res.status(400).json({ 
+                error: `Üzgünüz, ${areaInfo.rows[0].area_name} alanı dolmuştur.`,
+                mevcutBosYer: capacity - filled
+            });
+        }
+
+        // --- Yer varsa işlemler devam eder (Aşağısı eski kodun aynısı) ---
         const eventCheck = await pool.query(
             'SELECT * FROM events WHERE tenant_id = $1 AND event_date = $2',
             [tenantId, date]
         );
 
         let eventId = null;
-        let note = "Standart Gün";
         let requiredPrepayment = 0;
-
         if (eventCheck.rows.length > 0) {
-            const event = eventCheck.rows[0];
-            eventId = event.id;
-            note = `Özel Etkinlik: ${event.event_name}`;
-            // Kişi başı kaporo miktarını toplam misafir sayısıyla çarpıyoruz
-            requiredPrepayment = event.min_prepayment_amount * guestCount;
+            eventId = eventCheck.rows[0].id;
+            requiredPrepayment = eventCheck.rows[0].min_prepayment_amount * guestCount;
         }
 
-        // 2. ADIM: Müşteriyi bul veya kaydet
         let customer = await pool.query('SELECT id FROM customers WHERE phone = $1', [phone]);
-        let customerId;
+        let customerId = customer.rows.length === 0 
+            ? (await pool.query('INSERT INTO customers (tenant_id, full_name, phone) VALUES ($1, $2, $3) RETURNING id', [tenantId, customerName, phone])).rows[0].id
+            : customer.rows[0].id;
 
-        if (customer.rows.length === 0) {
-            const newCustomer = await pool.query(
-                'INSERT INTO customers (tenant_id, full_name, phone) VALUES ($1, $2, $3) RETURNING id',
-                [tenantId, customerName, phone]
-            );
-            customerId = newCustomer.rows[0].id;
-        } else {
-            customerId = customer.rows[0].id;
-        }
-
-        // 3. ADIM: Rezervasyonu akıllı bilgilerle kaydet
         const newRes = await pool.query(
             `INSERT INTO reservations 
             (tenant_id, customer_id, area_id, event_id, guest_count, reservation_date, reservation_time, status) 
@@ -89,15 +93,14 @@ app.post('/api/reservations/create', async (req, res) => {
         );
 
         res.status(201).json({
-            message: "Rezervasyon Taslağı Oluşturuldu!",
-            info: note,
+            message: "Kapasite uygun, rezervasyon alındı!",
             totalPrepayment: requiredPrepayment,
             reservationId: newRes.rows[0].id
         });
 
     } catch (err) {
         console.error(err.message);
-        res.status(500).json({ error: "İşlem sırasında bir hata oluştu." });
+        res.status(500).json({ error: "Kapasite kontrolü sırasında bir hata oluştu." });
     }
 });
 
@@ -197,6 +200,31 @@ app.get('/api/admin/reservations/:date', async (req, res) => {
     } catch (err) {
         console.error(err.message);
         res.status(500).json({ error: "Liste alınamadı." });
+    }
+});
+
+// ÖDEME ONAYI: Rezervasyon durumunu günceller
+app.patch('/api/reservations/update-status/:id', async (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body; // Örn: 'confirmed'
+
+    try {
+        const updatedRes = await pool.query(
+            'UPDATE reservations SET status = $1 WHERE id = $2 RETURNING *',
+            [status, id]
+        );
+
+        if (updatedRes.rows.length === 0) {
+            return res.status(404).json({ error: "Rezervasyon bulunamadı." });
+        }
+
+        res.json({
+            message: "Rezervasyon durumu başarıyla güncellendi!",
+            kayit: updatedRes.rows[0]
+        });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ error: "Durum güncellenirken bir hata oluştu." });
     }
 });
 
