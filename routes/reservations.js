@@ -99,4 +99,38 @@ router.get('/active-staff/:tenantId', async (req, res) => {
     }
 });
 
+/**
+ * 6. İŞLETMEYE ÖZEL ALANLARI LİSTELE
+ * Personel panelindeki hızlı kayıt formunda alanları göstermek için kullanılır.
+ */
+router.get('/areas/:tenantId', async (req, res) => {
+    try {
+        const { tenantId } = req.params;
+        const areas = await pool.query('SELECT id, area_name FROM areas WHERE tenant_id = $1', [tenantId]);
+        res.json(areas.rows);
+    } catch (err) {
+        res.status(500).json({ error: "Alanlar çekilemedi: " + err.message });
+    }
+});
+
+/**
+ * 7. REZERVASYON DÜZENLEME (Personel Yetkisi Dahil)
+ * Kişi sayısı, alan veya saat gibi bilgileri günceller.
+ */
+router.patch('/edit/:id', async (req, res) => {
+    try {
+        const { areaId, guestCount, time } = req.body;
+        const { id } = req.params;
+        await pool.query(
+            `UPDATE reservations 
+             SET area_id = $1, guest_count = $2, reservation_time = $3 
+             WHERE id = $4`,
+            [areaId, guestCount, time, id]
+        );
+        res.json({ success: true, message: "Rezervasyon güncellendi." });
+    } catch (err) {
+        res.status(500).json({ error: "Güncelleme hatası: " + err.message });
+    }
+});
+
 module.exports = router;
