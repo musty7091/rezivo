@@ -88,8 +88,8 @@ router.post('/wizard-setup', async (req, res) => {
  */
 router.get('/tenants', async (req, res) => {
     try {
-        const tenants = await pool.query('SELECT * FROM tenants ORDER BY created_at DESC');
-        res.json(tenants.rows);
+        const result = await pool.query('SELECT * FROM tenants ORDER BY created_at DESC');
+        res.json(result.rows);
     } catch (err) {
         console.error("LİSTELEME HATASI:", err.message);
         res.status(500).json({ error: err.message });

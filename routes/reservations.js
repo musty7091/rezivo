@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const pool = require('../config/db'); //
+const pool = require('../config/db');
 
 // 1. TAM LİSTELEME: Kapıdaki görevli ve yönetici paneli için
 router.get('/list/:date', async (req, res) => {
@@ -77,6 +77,25 @@ router.patch('/update-status/:id', async (req, res) => {
         res.json({ message: "Rezervasyon durumu güncellendi!" });
     } catch (err) {
         res.status(500).json({ error: "Güncelleme hatası: " + err.message });
+    }
+});
+
+// 5. STAFF PANEL İÇİN ÖZEL: Sadece bugünün aktif kayıtlarını getir
+router.get('/active-staff/:tenantId', async (req, res) => {
+    try {
+        const { tenantId } = req.params;
+        const result = await pool.query(
+            `SELECT r.*, c.full_name, a.area_name 
+             FROM reservations r
+             JOIN customers c ON r.customer_id = c.id
+             JOIN areas a ON r.area_id = a.id
+             WHERE r.tenant_id = $1 AND r.reservation_date = CURRENT_DATE
+             ORDER BY r.reservation_time ASC`,
+            [tenantId]
+        );
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: "Veri çekilemedi: " + err.message });
     }
 });
 
