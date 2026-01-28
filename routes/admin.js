@@ -94,4 +94,57 @@ router.get('/staff/:tenantId', async (req, res) => {
     }
 });
 
+/**
+ * ❌ PERSONEL SİLME
+ * Belirli bir personeli sistemden tamamen kaldırır.
+ */
+router.delete('/staff/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        await pool.query('DELETE FROM users WHERE id = $1', [id]);
+        res.json({ success: true, message: "Personel başarıyla silindi." });
+    } catch (err) {
+        console.error("Personel silme hatası:", err.message);
+        res.status(500).json({ error: "Silme işlemi başarısız." });
+    }
+});
+
+/**
+ * 📝 PERSONEL DÜZENLEME
+ * Mevcut personelin bilgilerini günceller.
+ */
+router.patch('/staff/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { username, email, role } = req.body;
+        await pool.query(
+            'UPDATE users SET username = $1, email = $2, role = $3 WHERE id = $4',
+            [username, email, role, id]
+        );
+        res.json({ success: true, message: "Personel güncellendi." });
+    } catch (err) {
+        console.error("Personel güncelleme hatası:", err.message);
+        res.status(500).json({ error: "Güncelleme işlemi başarısız." });
+    }
+});
+
+/**
+ * 📅 ETKİNLİK OLUŞTURMA
+ * İşletme sahibi için konser, özel yemek vb. etkinlikleri tanımlar.
+ */
+router.post('/create-event', async (req, res) => {
+    const { tenantId, eventName, eventDate, prepaymentAmount, description } = req.body;
+    try {
+        await pool.query(
+            `INSERT INTO events (tenant_id, event_name, event_date, min_prepayment_amount, description) 
+             VALUES ($1, $2, $3, $4, $5)`,
+            [tenantId, eventName, eventDate, prepaymentAmount, description]
+        );
+        res.status(201).json({ success: true, message: "Etkinlik başarıyla oluşturuldu." });
+    } catch (err) {
+        console.error("Etkinlik oluşturma hatası:", err.message);
+        res.status(500).json({ error: "Etkinlik oluşturulamadı." });
+    }
+});
+
 module.exports = router;
