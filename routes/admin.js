@@ -23,6 +23,7 @@ router.post('/upload-event-image', upload.single('eventImage'), (req, res) => {
 
 /**
  * 📊 GELİŞMİŞ GÜNLÜK RAPOR
+ * Yeni şemadaki yemek hizmeti verilerini de kapsar.
  */
 router.get('/report/:date', async (req, res) => {
     try {
@@ -36,9 +37,10 @@ router.get('/report/:date', async (req, res) => {
 
         const occupancyDetail = await pool.query(
             `SELECT a.area_name, a.total_capacity, 
-             COALESCE(SUM(r.guest_count), 0) as current_guests
+             COALESCE(SUM(r.guest_count), 0) as current_guests,
+             COUNT(r.id) FILTER (WHERE r.is_meal_included = true) as total_meals
              FROM areas a
-             LEFT JOIN reservations r ON a.id = r.area_id AND r.reservation_date = $2
+             LEFT JOIN reservations r ON a.id = r.area_id AND r.reservation_date = $2 AND r.status != 'cancelled'
              WHERE a.tenant_id = $1
              GROUP BY a.id, a.area_name, a.total_capacity`,
             [tenantId, date]
@@ -50,32 +52,31 @@ router.get('/report/:date', async (req, res) => {
         });
     } catch (err) { 
         console.error("Rapor çekme hatası:", err.message);
-        res.status(500).json({ error: err.message }); 
+        res.status(500).json({ error: "Rapor verileri alınamadı." }); 
     }
 });
 
 /**
  * 👥 İŞLETME SAHİBİ İÇİN PERSONEL EKLEME
+ * staff_hostess, staff_waiter, staff_kitchen rollerini destekler.
  */
 router.post('/add-staff', async (req, res) => {
     const { tenantId, email, username, password, role } = req.body;
-    console.log("Personel Kayıt İsteği:", req.body);
-    if (!tenantId || tenantId === "undefined" || tenantId === "null") {
-        return res.status(400).json({ 
-            success: false, 
-            error: "İşletme kimliği (tenantId) tanımlanamadı. Lütfen sayfayı yenileyip tekrar giriş yapın." 
-        });
+    
+    if (!tenantId || tenantId === "undefined") {
+        return res.status(400).json({ error: "İşletme kimliği eksik." });
     }
+
     try {
         await pool.query(
-            `INSERT INTO users (tenant_id, email, username, password_hash, role) 
-             VALUES ($1, $2, $3, $4, $5)`,
+            `INSERT INTO users (tenant_id, email, username, password_hash, role, is_active) 
+             VALUES ($1, $2, $3, $4, $5, true)`,
             [parseInt(tenantId), email, username, password, role]
         );
         res.status(201).json({ success: true, message: "Personel başarıyla tanımlandı." });
     } catch (err) {
         console.error("Personel ekleme hatası:", err.message);
-        res.status(500).json({ success: false, error: "Veritabanı hatası: " + err.message });
+        res.status(500).json({ success: false, error: "Bu e-posta zaten kullanımda." });
     }
 });
 
@@ -85,17 +86,13 @@ router.post('/add-staff', async (req, res) => {
 router.get('/staff/:tenantId', async (req, res) => {
     try {
         const { tenantId } = req.params;
-        if (!tenantId || tenantId === "undefined") {
-            return res.status(400).json({ error: "İşletme ID eksik." });
-        }
         const result = await pool.query(
-            'SELECT id, username, email, role FROM users WHERE tenant_id = $1 AND role != $2 ORDER BY id DESC', 
-            [parseInt(tenantId), 'admin']
+            'SELECT id, username, email, role, is_active FROM users WHERE tenant_id = $1 AND role NOT IN ($2, $3) ORDER BY id DESC', 
+            [parseInt(tenantId), 'superadmin', 'owner']
         );
         res.json(result.rows);
     } catch (err) {
-        console.error("Personel listeleme hatası:", err.message);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: "Personel listesi alınamadı." });
     }
 });
 
@@ -104,58 +101,49 @@ router.get('/staff/:tenantId', async (req, res) => {
  */
 router.delete('/staff/:id', async (req, res) => {
     try {
-        const { id } = req.params;
-        await pool.query('DELETE FROM users WHERE id = $1', [id]);
+        await pool.query('DELETE FROM users WHERE id = $1', [req.params.id]);
         res.json({ success: true, message: "Personel başarıyla silindi." });
     } catch (err) {
-        console.error("Personel silme hatası:", err.message);
         res.status(500).json({ error: "Silme işlemi başarısız." });
     }
 });
 
 /**
- * 📝 PERSONEL DÜZENLEME
- */
-router.patch('/staff/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { username, email, role } = req.body;
-        await pool.query(
-            'UPDATE users SET username = $1, email = $2, role = $3 WHERE id = $4',
-            [username, email, role, id]
-        );
-        res.json({ success: true, message: "Personel güncellendi." });
-    } catch (err) {
-        console.error("Personel güncelleme hatası:", err.message);
-        res.status(500).json({ error: "Güncelleme işlemi başarısız." });
-    }
-});
-
-/**
- * 📅 ETKİNLİK OLUŞTURMA (ZENGİNLEŞTİRİLMİŞ)
+ * 📅 ETKİNLİK OLUŞTURMA (NİHAİ)
+ * has_meal_service ve meal_price alanlarını doldurur, istatistikleri günceller.
  */
 router.post('/create-event', async (req, res) => {
     const { 
         tenantId, eventName, eventDate, prepaymentAmount, description,
-        imageUrl, doorTime, startTime, endTime, capacity 
+        imageUrl, doorTime, startTime, endTime, capacity, hasMeal, mealPrice 
     } = req.body;
+
     try {
-        await pool.query(
+        await pool.query('BEGIN');
+
+        const result = await pool.query(
             `INSERT INTO events (
                 tenant_id, event_name, event_date, min_prepayment_amount, description,
-                image_url, door_open_time, event_start_time, event_end_time, total_capacity
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-            [tenantId, eventName, eventDate, prepaymentAmount, description, imageUrl, doorTime, startTime, endTime, capacity]
+                image_url, door_open_time, event_start_time, event_end_time, total_capacity,
+                has_meal_service, meal_price
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
+            [tenantId, eventName, eventDate, prepaymentAmount, description, imageUrl, doorTime, startTime, endTime, capacity, hasMeal, mealPrice]
         );
-        res.status(201).json({ success: true, message: "Etkinlik başarıyla oluşturuldu." });
+
+        // SüperAdmin İstatistik Güncelleme
+        await pool.query('UPDATE tenants SET total_events_created = total_events_created + 1 WHERE id = $1', [tenantId]);
+
+        await pool.query('COMMIT');
+        res.status(201).json({ success: true, message: "Etkinlik başarıyla oluşturuldu.", eventId: result.rows[0].id });
     } catch (err) {
+        await pool.query('ROLLBACK');
         console.error("Etkinlik oluşturma hatası:", err.message);
         res.status(500).json({ error: "Etkinlik oluşturulamadı." });
     }
 });
 
 /**
- * 🔍 ETKİNLİKLERİ LİSTELE (Yeni Eklendi)
+ * 🔍 ETKİNLİKLERİ LİSTELE
  */
 router.get('/events/:tenantId', async (req, res) => {
     try {
@@ -166,46 +154,43 @@ router.get('/events/:tenantId', async (req, res) => {
         );
         res.json(result.rows);
     } catch (err) {
-        console.error("Etkinlik listeleme hatası:", err.message);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: "Etkinlikler listelenemedi." });
     }
 });
 
 /**
- * 🗑️ ETKİNLİK SİLME (Yeni Eklendi)
+ * 🗑️ ETKİNLİK SİLME
  */
 router.delete('/events/:id', async (req, res) => {
     try {
-        const { id } = req.params;
-        await pool.query('DELETE FROM events WHERE id = $1', [id]);
+        await pool.query('DELETE FROM events WHERE id = $1', [req.params.id]);
         res.json({ success: true, message: "Etkinlik silindi." });
     } catch (err) {
-        console.error("Etkinlik silme hatası:", err.message);
         res.status(500).json({ error: "Silme işlemi başarısız." });
     }
 });
 
 /**
- * 📝 ETKİNLİK GÜNCELLEME (Yeni Eklendi)
+ * 📝 ETKİNLİK GÜNCELLEME
  */
 router.patch('/events/:id', async (req, res) => {
     const { id } = req.params;
     const { 
         eventName, eventDate, prepaymentAmount, description,
-        imageUrl, doorTime, startTime, endTime, capacity 
+        imageUrl, doorTime, startTime, endTime, capacity, hasMeal, mealPrice 
     } = req.body;
     try {
         await pool.query(
             `UPDATE events SET 
                 event_name = $1, event_date = $2, min_prepayment_amount = $3, 
                 description = $4, image_url = $5, door_open_time = $6, 
-                event_start_time = $7, event_end_time = $8, total_capacity = $9
-             WHERE id = $10`,
-            [eventName, eventDate, prepaymentAmount, description, imageUrl, doorTime, startTime, endTime, capacity, id]
+                event_start_time = $7, event_end_time = $8, total_capacity = $9,
+                has_meal_service = $10, meal_price = $11
+             WHERE id = $12`,
+            [eventName, eventDate, prepaymentAmount, description, imageUrl, doorTime, startTime, endTime, capacity, hasMeal, mealPrice, id]
         );
         res.json({ success: true, message: "Etkinlik güncellendi." });
     } catch (err) {
-        console.error("Etkinlik güncelleme hatası:", err.message);
         res.status(500).json({ error: "Güncelleme başarısız." });
     }
 });

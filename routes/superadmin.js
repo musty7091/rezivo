@@ -3,12 +3,11 @@ const router = express.Router();
 const pool = require('../config/db');
 
 /**
- * REZIVO PRO - NİHAİ KURULUM ROTASI
- * 8 Adımdan gelen tüm verileri tek bir TRANSACTION ile kaydeder.
- * Tireli dosya isimleri ve Mail tabanlı giriş sistemine tam uyumludur.
+ * 🚀 REZIVO PRO - MASTER KURULUM SİHİRBAZI
+ * 8 adımdan gelen verileri alır; İşletmeyi, Alanları ve Dükkan Sahibini (Owner) tek bir işlemle kurar.
  */
 router.post('/wizard-setup', async (req, res) => {
-    // Frontend'den gelen tüm verileri eksiksiz karşılıyoruz
+    // Frontend'den gelen tüm yapılandırılmış veriler
     const { 
         tenantName, 
         tenantPhone, 
@@ -22,9 +21,10 @@ router.post('/wizard-setup', async (req, res) => {
     const client = await pool.connect();
 
     try {
-        await client.query('BEGIN'); // Güvenli kayıt modunu (Transaction) başlat
+        await client.query('BEGIN'); // İşlemi başlat
 
-        // 1. İşletme Kaydı (Tenants tablosu)
+        // 1. İşletme Kaydı (Tenants Tablosu)
+        // Senin belirlediğin modüler özellikler (CRM, Analiz vb.) burada DNA olarak kaydedilir.
         const tQuery = `
             INSERT INTO tenants (
                 name, phone, address, 
@@ -47,22 +47,23 @@ router.post('/wizard-setup', async (req, res) => {
         const tRes = await client.query(tQuery, tValues);
         const tenantId = tRes.rows[0].id;
 
-        // 2. Alanlar (Areas) Kaydı
+        // 2. İşletme Alanlarının Tanımlanması (Areas Tablosu)
+        // Kaç adet alan (Teras, VIP vb.) gönderildiyse döngüyle kaydedilir.
         if (areas && areas.length > 0) {
             const aQuery = `INSERT INTO areas (tenant_id, area_name, total_capacity) VALUES ($1, $2, $3)`;
             for (let area of areas) {
-                // frontend 'name' gönderiyor, veritabanı 'area_name' bekliyor
+                // Frontend 'name' verisini, veritabanı 'area_name' sütununa yazar.
                 await client.query(aQuery, [tenantId, area.name, area.capacity]);
             }
         }
 
-        // 3. İşletme Sahibi Kaydı (E-posta odaklı)
-        // Kullanıcı adını mailin @ işaretinden önceki kısmından otomatik türetelim
+        // 3. İşletme Sahibi (Owner) Hesabı (Users Tablosu)
+        // Mail odaklı giriş sistemi için benzersiz kayıt oluşturulur.
         const generatedUsername = adminEmail.split('@')[0];
 
         const uQuery = `
-            INSERT INTO users (tenant_id, email, username, password_hash, role) 
-            VALUES ($1, $2, $3, $4, 'admin')
+            INSERT INTO users (tenant_id, email, username, password_hash, role, is_active) 
+            VALUES ($1, $2, $3, $4, 'owner', true)
         `;
         await client.query(uQuery, [tenantId, adminEmail, generatedUsername, adminPass]);
 
@@ -70,29 +71,70 @@ router.post('/wizard-setup', async (req, res) => {
         
         res.status(201).json({ 
             success: true, 
-            message: "İşletme ve Admin hesabı başarıyla oluşturuldu." 
+            message: "Rezivo Master: İşletme kurulumu ve yönetici hesabı başarıyla tamamlandı." 
         });
 
     } catch (err) {
-        await client.query('ROLLBACK'); // En ufak hatada yapılan tüm işlemleri geri al (çöp veri oluşmasın)
+        await client.query('ROLLBACK'); // En ufak hatada işlemi geri al
         console.error("SİHİRBAZ KAYIT HATASI:", err.message);
-        res.status(500).json({ success: false, error: err.message });
+        res.status(500).json({ success: false, error: "Kurulum hatası: " + err.message });
     } finally {
-        client.release(); // Veritabanı bağlantısını havuza geri bırak
+        client.release(); // Bağlantıyı havuza geri bırak
     }
 });
 
 /**
- * SÜPER ADMİN PANELİ LİSTELEME ROTASI
- * Kaydedilen tüm işletmeleri super-admin.html sayfasındaki tabloda gösterir.
+ * 👁️ SÜPER İZLEME PANELİ (Superadmin Dashboard)
+ * Sistemdeki tüm işletmeleri, aktivite sayılarıyla birlikte listeler.
  */
 router.get('/tenants', async (req, res) => {
     try {
+        // total_events_created ve total_reservations_taken sayesinde etkinlikleri takip edebilirsin.
         const result = await pool.query('SELECT * FROM tenants ORDER BY created_at DESC');
         res.json(result.rows);
     } catch (err) {
         console.error("LİSTELEME HATASI:", err.message);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: "İşletme listesi alınamadı." });
+    }
+});
+
+/**
+ * 🛠️ SÜPERADMİN MÜDAHALE YETKİSİ
+ * Bir işletmenin ayarlarını senin panelinden güncellemesini sağlar.
+ */
+router.patch('/tenant-settings/:id', async (req, res) => {
+    const { id } = req.params;
+    const { is_prepayment_enabled, is_crm_enabled, is_analytics_enabled } = req.body;
+    
+    try {
+        await pool.query(
+            `UPDATE tenants 
+             SET is_prepayment_enabled = $1, is_crm_enabled = $2, is_analytics_enabled = $3 
+             WHERE id = $4`,
+            [is_prepayment_enabled, is_crm_enabled, is_analytics_enabled, id]
+        );
+        res.json({ success: true, message: "İşletme yetkileri güncellendi." });
+    } catch (err) {
+        res.status(500).json({ error: "Güncelleme başarısız." });
+    }
+});
+
+/**
+ * 📜 AKTİVİTE LOGLARI (Audit Logs)
+ * Sistemde kim ne yapmış, tek bir listede SüperAdmin'e sunar.
+ */
+router.get('/system-logs', async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT l.*, u.email as user_email, t.name as tenant_name 
+             FROM activity_logs l
+             JOIN users u ON l.user_id = u.id
+             JOIN tenants t ON l.tenant_id = t.id
+             ORDER BY l.created_at DESC LIMIT 100`
+        );
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: "Loglar çekilemedi." });
     }
 });
 
