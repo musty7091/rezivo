@@ -1,47 +1,58 @@
+// --- ÖNCE (Mevcut Satırlar) ---
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 
+// --- SONRA (Yeni Eklenen ve Güncellenen Satırlar) ---
+const express = require('express');
+const router = express.Router();
+const pool = require('../config/db');
+const bcrypt = require('bcryptjs'); // Şifreleme kütüphanesi
+const jwt = require('jsonwebtoken'); // Token oluşturma kütüphanesi
+
 /**
  * 🔑 KULLANICI GİRİŞİ (LOGIN)
- * Mail adresi üzerinden kullanıcıyı tanır ve rolüne göre yönlendirir.
  */
 router.post('/login', async (req, res) => {
     const { email, password } = req.body;
 
     try {
-        // 1. Kullanıcıyı e-posta ile ara ve aktiflik durumunu kontrol et
         const userRes = await pool.query(
             'SELECT * FROM users WHERE email = $1 AND is_active = true',
             [email]
         );
 
-        // 2. Kullanıcı var mı?
         if (userRes.rows.length === 0) {
             return res.status(401).json({ success: false, error: "E-posta kayıtlı değil veya hesap pasif hale getirilmiş." });
         }
 
         const user = userRes.rows[0];
 
-        // 3. Şifre kontrolü (Şimdilik düz metin, bcrypt entegrasyonuna hazırdır)
-        if (user.password_hash !== password) {
+        // GÜNCELLEME: Şifre artık güvenli karşılaştırılıyor
+        const isMatch = await bcrypt.compare(password, user.password_hash);
+        if (!isMatch) {
             return res.status(401).json({ success: false, error: "Hatalı şifre girdiniz." });
         }
 
-        // 4. ROL BAZLI YÖNLENDİRME MANTIĞI
+        // YENİ: Kullanıcıya özel dijital anahtar (Token) üretimi
+        const token = jwt.sign(
+            { userId: user.id, role: user.role, tenantId: user.tenant_id },
+            process.env.JWT_SECRET || 'rezivo_gizli_anahtar', // .env dosyasından okunur
+            { expiresIn: '24h' } // Anahtar 24 saat geçerli kalır
+        );
+
         let redirectPath = "";
         if (user.role === 'superadmin') {
             redirectPath = "super-admin.html";
         } else if (user.role === 'owner') {
             redirectPath = "business-dashboard.html";
         } else {
-            // staff_hostess, staff_waiter, staff_kitchen rolleri ortak personel paneline gider
             redirectPath = "staff-panel.html";
         }
 
-        // Başarılı yanıt ve kritik oturum verileri
         res.json({
             success: true,
+            token, // Üretilen anahtar istemciye gönderilir
             role: user.role,
             tenantId: user.tenant_id,
             userId: user.id,
@@ -54,5 +65,3 @@ router.post('/login', async (req, res) => {
         res.status(500).json({ success: false, error: "Sunucu tarafında bir hata oluştu." });
     }
 });
-
-module.exports = router;
