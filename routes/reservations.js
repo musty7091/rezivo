@@ -172,4 +172,44 @@ router.delete('/delete/:id', async (req, res) => {
     }
 });
 
+/**
+ * 6. ALAN LİSTELEME (Personel Paneli İçin)
+ * Personel panelindeki hızlı kayıt modalında alanların görünmesini sağlar.
+ */
+router.get('/areas/:tenantId', async (req, res) => {
+    try {
+        const { tenantId } = req.params;
+        const areas = await pool.query(
+            'SELECT id, area_name, total_capacity FROM areas WHERE tenant_id = $1', 
+            [tenantId]
+        );
+        res.json(areas.rows);
+    } catch (err) {
+        console.error("Alan çekme hatası:", err.message);
+        res.status(500).json({ error: "Alanlar yüklenemedi." });
+    }
+});
+
+/**
+ * 7. AKTİF PERSONEL LİSTESİ
+ * Personel panelinde o günkü rezervasyonları listeler.
+ */
+router.get('/active-staff/:tenantId', async (req, res) => {
+    try {
+        const { tenantId } = req.params;
+        const result = await pool.query(
+            `SELECT r.*, c.full_name, a.area_name 
+             FROM reservations r 
+             JOIN customers c ON r.customer_id = c.id 
+             LEFT JOIN areas a ON r.area_id = a.id
+             WHERE r.tenant_id = $1 AND r.reservation_date = CURRENT_DATE
+             ORDER BY r.reservation_time ASC`,
+            [tenantId]
+        );
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: "Liste çekilemedi." });
+    }
+});
+
 module.exports = router;
