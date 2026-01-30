@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
+const bcrypt = require('bcryptjs'); // Şifreleme için eklendi
 
 /**
  * 🚀 REZIVO PRO - MASTER KURULUM SİHİRBAZI
@@ -61,11 +62,15 @@ router.post('/wizard-setup', async (req, res) => {
         // Mail odaklı giriş sistemi için benzersiz kayıt oluşturulur.
         const generatedUsername = adminEmail.split('@')[0];
 
+        // GÜNCELLEME: Şifre veritabanına kaydedilmeden önce şifreleniyor
+        const salt = await bcrypt.genSalt(10);
+        const hashedPass = await bcrypt.hash(adminPass, salt);
+
         const uQuery = `
             INSERT INTO users (tenant_id, email, username, password_hash, role, is_active) 
             VALUES ($1, $2, $3, $4, 'owner', true)
         `;
-        await client.query(uQuery, [tenantId, adminEmail, generatedUsername, adminPass]);
+        await client.query(uQuery, [tenantId, adminEmail, generatedUsername, hashedPass]);
 
         await client.query('COMMIT'); // Tüm adımlar hatasızsa veritabanına kalıcı olarak işle
         

@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require('../config/db');
 const multer = require('multer'); 
 const path = require('path'); 
+const bcrypt = require('bcryptjs'); // Şifreleme için eklendi
 
 // DOSYA YÜKLEME AYARLARI (MULTER)
 const storage = multer.diskStorage({
@@ -68,10 +69,14 @@ router.post('/add-staff', async (req, res) => {
     }
 
     try {
+        // GÜNCELLEME: Personel şifresi kaydedilmeden önce şifreleniyor
+        const salt = await bcrypt.genSalt(10);
+        const hashedPass = await bcrypt.hash(password, salt);
+
         await pool.query(
             `INSERT INTO users (tenant_id, email, username, password_hash, role, is_active) 
              VALUES ($1, $2, $3, $4, $5, true)`,
-            [parseInt(tenantId), email, username, password, role]
+            [parseInt(tenantId), email, username, hashedPass, role]
         );
         res.status(201).json({ success: true, message: "Personel başarıyla tanımlandı." });
     } catch (err) {
