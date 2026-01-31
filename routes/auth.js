@@ -1,7 +1,3 @@
-// --- ÖNCE (Mevcut Satırlar) ---
-const express = require('express');
-const router = express.Router();
-const pool = require('../config/db');
 
 // --- SONRA (Yeni Eklenen ve Güncellenen Satırlar) ---
 const express = require('express');
@@ -65,3 +61,5 @@ router.post('/login', async (req, res) => {
         res.status(500).json({ success: false, error: "Sunucu tarafında bir hata oluştu." });
     }
 });
+
+module.exports = router;
